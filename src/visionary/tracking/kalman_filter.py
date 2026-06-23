@@ -60,6 +60,27 @@ class ConstantVelocityKalmanFilter:
             np.array([[measured_center_x], [measured_center_y]], dtype=np.float32)
         )
 
+    def correct_position_preserving_velocity(
+        self, measured_center_x: float, measured_center_y: float
+    ) -> None:
+        """Pull the position estimate toward a measurement while keeping velocity.
+
+        This is the antidote to *track coalescence*: when two identical objects
+        overlap, the measured blob centre barely moves, so a normal correction
+        would drag the filter's velocity toward zero and the track would forget
+        which way its object was heading. By restoring the predicted (pre-update)
+        velocity after the correction, the box follows the visible blob but the
+        established motion -- the only thing that can later tell the two objects
+        apart -- is preserved intact.
+        """
+        predicted_velocity_x = float(self._kalman_filter.statePre[2, 0])
+        predicted_velocity_y = float(self._kalman_filter.statePre[3, 0])
+        self._kalman_filter.correct(
+            np.array([[measured_center_x], [measured_center_y]], dtype=np.float32)
+        )
+        self._kalman_filter.statePost[2, 0] = predicted_velocity_x
+        self._kalman_filter.statePost[3, 0] = predicted_velocity_y
+
     def coast_without_measurement(self) -> None:
         """Advance the state without a measurement (used while a track is missed)."""
         self._kalman_filter.statePost = self._kalman_filter.statePre.copy()
@@ -70,6 +91,13 @@ class ConstantVelocityKalmanFilter:
         return (
             float(self._kalman_filter.statePost[0, 0]),
             float(self._kalman_filter.statePost[1, 0]),
+        )
+
+    def get_current_velocity(self) -> tuple[float, float]:
+        """Return the current best estimate of the object velocity (pixels/frame)."""
+        return (
+            float(self._kalman_filter.statePost[2, 0]),
+            float(self._kalman_filter.statePost[3, 0]),
         )
 
     def set_current_center(self, new_center_x: float, new_center_y: float) -> None:

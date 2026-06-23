@@ -112,11 +112,51 @@ class SyntheticRocketSceneSource:
         self._rocket_sprite_image = rocket_sprite_image
         self._sprite_height, self._sprite_width = self._rocket_sprite_image.shape[:2]
 
+        # Per-rocket recoloured sprites are cached here so a tinted variant is
+        # built once, not every frame.
+        self._tinted_sprite_cache: dict[tuple[float, float, float], np.ndarray] = {}
+
+        # The rockets travel on diagonal paths and bounce off every wall, so the
+        # motion looks natural rather than gliding along a single axis. rocket_a
+        # and rocket_b are placed on the *same* diagonal line travelling in
+        # opposite directions, so they still meet in a head-on collision near the
+        # centre of the frame -- which exercises the identity-through-occlusion
+        # handling. Their sprites are identical, so only motion can tell them apart.
+        #
+        # rocket_d is a *distinct* blue rocket roaming its own diagonal. Because it
+        # does not look like the others, the tracker can recognise it by its
+        # intrinsic features (its feature memory) and hold a single stable identity
+        # for it even through crossings -- the "this is the same blue object"
+        # reasoning that the camera stage will reuse for a panned-away landmark.
         self._simulated_rockets: dict[str, dict] = {
-            "rocket_a": {"left_x": 50, "top_y": 100, "velocity_x": 2, "velocity_y": 1, "is_visible": True},
-            "rocket_b": {"left_x": 200, "top_y": 300, "velocity_x": -1, "velocity_y": 2, "is_visible": True},
+            "rocket_a": {
+                "left_x": 40, "top_y": 80, "velocity_x": 3, "velocity_y": 2, "is_visible": True
+            },
+            "rocket_b": {
+                "left_x": 520, "top_y": 400, "velocity_x": -3, "velocity_y": -2, "is_visible": True
+            },
+            "rocket_d": {
+                "left_x": 320, "top_y": 250, "velocity_x": 2, "velocity_y": -3,
+                "color_tint": (1.7, 0.55, 0.55), "is_visible": True,
+            },
         }
         self.current_ground_truth_bounding_boxes: dict[str, tuple[int, int, int, int]] = {}
+
+    def _sprite_image_for_rocket(self, rocket_state: dict) -> np.ndarray:
+        """Return this rocket's sprite, recoloured by its tint if it has one."""
+        color_tint = rocket_state.get("color_tint")
+        if color_tint is None:
+            return self._rocket_sprite_image
+        cached_sprite = self._tinted_sprite_cache.get(color_tint)
+        if cached_sprite is None:
+            cached_sprite = np.clip(
+                self._rocket_sprite_image.astype(np.float32)
+                * np.array(color_tint, dtype=np.float32),
+                0,
+                255,
+            ).astype(np.uint8)
+            self._tinted_sprite_cache[color_tint] = cached_sprite
+        return cached_sprite
 
     @staticmethod
     def _build_placeholder_rocket_sprite() -> np.ndarray:
@@ -154,15 +194,20 @@ class SyntheticRocketSceneSource:
 
         # Scripted events that exercise new-object discovery and lost/recover logic.
         if self._current_frame_index == 150 and "rocket_c" not in self._simulated_rockets:
+            # A third rocket enters on its own diagonal, crossing the others'
+            # paths and bouncing off the walls like the rest.
             self._simulated_rockets["rocket_c"] = {
-                "left_x": 10, "top_y": 400, "velocity_x": 3, "velocity_y": -1, "is_visible": True
+                "left_x": 300, "top_y": 40, "velocity_x": -2, "velocity_y": 3, "is_visible": True
             }
-        if self._current_frame_index == 300 and self._simulated_rockets["rocket_a"]["is_visible"]:
-            self._simulated_rockets["rocket_a"]["is_visible"] = False
-        if self._current_frame_index == 450 and not self._simulated_rockets["rocket_a"]["is_visible"]:
+        rocket_a_state = self._simulated_rockets["rocket_a"]
+        if self._current_frame_index == 300 and rocket_a_state["is_visible"]:
+            rocket_a_state["is_visible"] = False
+        if self._current_frame_index == 450 and not rocket_a_state["is_visible"]:
             self._simulated_rockets["rocket_a"]["is_visible"] = True
-            self._simulated_rockets["rocket_a"]["left_x"] = 50
-            self._simulated_rockets["rocket_a"]["top_y"] = 100
+            self._simulated_rockets["rocket_a"]["left_x"] = 40
+            self._simulated_rockets["rocket_a"]["top_y"] = 80
+            self._simulated_rockets["rocket_a"]["velocity_x"] = 3
+            self._simulated_rockets["rocket_a"]["velocity_y"] = 2
 
     def _render_current_frame(self) -> np.ndarray:
         frame = self._random_number_generator.integers(
@@ -172,22 +217,31 @@ class SyntheticRocketSceneSource:
         for rocket_identifier, rocket_state in self._simulated_rockets.items():
             if not rocket_state["is_visible"]:
                 continue
-            clamped_left_x = max(
-                0, min(rocket_state["left_x"], self._frame_width_in_pixels - self._sprite_width)
-            )
-            clamped_top_y = max(
-                0, min(rocket_state["top_y"], self._frame_height_in_pixels - self._sprite_height)
-            )
-            drawable_width = min(self._sprite_width, self._frame_width_in_pixels - clamped_left_x)
-            drawable_height = min(self._sprite_height, self._frame_height_in_pixels - clamped_top_y)
-            if drawable_width <= 0 or drawable_height <= 0:
+            sprite_image = self._sprite_image_for_rocket(rocket_state)
+            box_left_x = int(round(rocket_state["left_x"]))
+            box_top_y = int(round(rocket_state["top_y"]))
+
+            # Intersect the sprite's box with the frame. A rocket that is fully
+            # outside the frame contributes no pixels and no ground truth -- it is
+            # genuinely gone, so the tracker must rely on permanence to hold it.
+            visible_left_x = max(0, box_left_x)
+            visible_top_y = max(0, box_top_y)
+            visible_right_x = min(self._frame_width_in_pixels, box_left_x + self._sprite_width)
+            visible_bottom_y = min(self._frame_height_in_pixels, box_top_y + self._sprite_height)
+            if visible_right_x <= visible_left_x or visible_bottom_y <= visible_top_y:
                 continue
-            frame[
-                clamped_top_y : clamped_top_y + drawable_height,
-                clamped_left_x : clamped_left_x + drawable_width,
-            ] = self._rocket_sprite_image[0:drawable_height, 0:drawable_width]
+
+            sprite_offset_x = visible_left_x - box_left_x
+            sprite_offset_y = visible_top_y - box_top_y
+            frame[visible_top_y:visible_bottom_y, visible_left_x:visible_right_x] = sprite_image[
+                sprite_offset_y : sprite_offset_y + (visible_bottom_y - visible_top_y),
+                sprite_offset_x : sprite_offset_x + (visible_right_x - visible_left_x),
+            ]
             self.current_ground_truth_bounding_boxes[rocket_identifier] = (
-                clamped_left_x, clamped_top_y, drawable_width, drawable_height
+                visible_left_x,
+                visible_top_y,
+                visible_right_x - visible_left_x,
+                visible_bottom_y - visible_top_y,
             )
         return frame
 

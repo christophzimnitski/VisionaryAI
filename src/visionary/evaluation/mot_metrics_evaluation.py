@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import numpy as np
-
 from visionary.configuration import TrackerConfiguration
 from visionary.detection.motion_difference_detector import MotionDifferenceDetector
 from visionary.geometry import BoundingBox

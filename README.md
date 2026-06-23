@@ -2,7 +2,10 @@
 
 A modular, tested multi-object tracking pipeline. It follows an arbitrary number
 of moving objects across video frames, assigns each a stable identity, survives
-short occlusions, and re-identifies objects that reappear.
+collisions and short occlusions, holds an object's identity by **object
+permanence** while it is off-screen (pointing an arrow at where it is expected to
+be), and **re-identifies** a returning object by its remembered intrinsic
+features rather than recomputing it from scratch.
 
 This project began as two divergent single-file scripts (`main.py`, `main2.py`)
 and was refactored into a layered package with a clear separation between
@@ -14,26 +17,29 @@ and input/output.
 ```
 src/visionary/
   configuration.py            # TrackerConfiguration: every tunable knob, one frozen dataclass
-  geometry.py                 # intersection_over_union, non_maximum_suppression (pure, testable)
+  geometry.py                 # IoU, NMS, and off-screen expectation (arrow + bearing) -- pure
   logging_configuration.py    # structured logging instead of print()
   detection/
     base.py                   # ObjectDetector protocol + Detection dataclass
     motion_difference_detector.py   # canonical default detector (frame differencing)
     template_matching_detector.py   # alternative detector for a known template
   features/
-    appearance_traits.py      # appearance descriptors, type tokens, similarity (re-identification)
+    appearance_traits.py      # appearance descriptors, type tokens, similarity
+    object_feature_memory.py  # intrinsic-feature "object file" + partial-match re-identification
   tracking/
     kalman_filter.py          # constant-velocity Kalman filter wrapper
-    track.py                  # TrackedObject + lifecycle (ACTIVE / LOST)
-    association.py            # OPTIMAL Hungarian assignment fusing IoU + Mahalanobis + appearance
-    camera_motion_compensation.py   # ORB/RANSAC homography (now actually applied)
+    track.py                  # TrackedObject + lifecycle + feature memory
+    association.py            # Hungarian assignment fusing IoU + Mahalanobis + appearance
+    anticipatory_focus_tracker.py   # focus layer: per-track local search, occlusion ordering
+    camera_motion_compensation.py   # ORB/RANSAC homography (applied to predictions)
     multi_object_tracker.py   # the orchestrator; returns structured results, draws nothing
   io/
-    video_sources.py          # video file, webcam, and deterministic synthetic scene (with ground truth)
+    video_sources.py          # video file, webcam, and deterministic synthetic scene (ground truth)
   visualization/
-    overlay_renderer.py       # all OpenCV drawing, isolated here
+    overlay_renderer.py       # all OpenCV drawing, isolated here (incl. off-screen pointer)
   evaluation/
-    mot_metrics_evaluation.py # MOTA / IDF1 scoring against the synthetic ground truth
+    mot_metrics_evaluation.py            # MOTA / IDF1 (optional motmetrics dependency)
+    identity_consistency_evaluation.py   # dependency-free ID-switch / recall scoring
   application.py              # command-line entry point that wires everything together
 ```
 
@@ -46,6 +52,15 @@ src/visionary/
   spatial overlap (IoU), motion consistency (Mahalanobis distance under the Kalman
   innovation covariance), and appearance similarity. This replaced the original
   greedy matching and genuinely honours the configured gate thresholds.
+- **Two layers, focus then filter:** a *focus layer* re-locates each known object
+  in a small window around its prediction (cheap, and the key to holding identity
+  through a collision); a *filter layer* then scans the whole frame for changes
+  that no tracked object already explains, to discover or re-identify objects.
+- **Object permanence:** a track whose expected position leaves the frame is held
+  (not retired) and reported with an off-screen pointer, then restored on return.
+- **Active memory:** each object keeps a small, brightness-invariant feature
+  memory; a returning object is recognised by a partial match against it, so its
+  identity survives even when its predicted position can no longer be trusted.
 - **Rendering is separate from tracking:** the tracker returns a drawing-free
   `FrameProcessingResult`, so it runs headless and is unit-testable.
 
@@ -82,7 +97,8 @@ python -m visionary.application --source video --video-path clip.mp4 --headless 
 
 ```bash
 pytest                                   # unit + integration tests
-python -m visionary.evaluation.mot_metrics_evaluation   # MOTA / IDF1 on the synthetic scene
+python -m visionary.evaluation.identity_consistency_evaluation   # ID switches + recall (no extra deps)
+python -m visionary.evaluation.mot_metrics_evaluation            # MOTA / IDF1 (needs motmetrics)
 ```
 
 ## Roadmap

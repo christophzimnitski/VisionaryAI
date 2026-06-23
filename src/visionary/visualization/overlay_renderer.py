@@ -20,6 +20,7 @@ _ESTABLISHED_TRACK_COLOR_BGR = (0, 255, 0)
 _DETECTION_BOX_COLOR_BGR = (0, 255, 255)
 _COLLISION_BANNER_COLOR_BGR = (0, 165, 255)
 _METADATA_TEXT_COLOR_BGR = (255, 255, 255)
+_OUT_OF_VIEW_INDICATOR_COLOR_BGR = (255, 0, 255)
 
 
 def _select_track_color_bgr(track_result: TrackResult) -> tuple[int, int, int]:
@@ -28,6 +29,48 @@ def _select_track_color_bgr(track_result: TrackResult) -> tuple[int, int, int]:
     if track_result.was_recovered_this_frame:
         return _RECOVERED_TRACK_COLOR_BGR
     return _ESTABLISHED_TRACK_COLOR_BGR
+
+
+def _draw_off_screen_indicator(frame: np.ndarray, track_result: TrackResult) -> None:
+    """Draw the edge arrow + bearing pointing to an out-of-view object."""
+    expectation = track_result.off_screen_expectation
+    frame_height, frame_width = frame.shape[:2]
+
+    arrow_length_in_pixels = 38
+    arrow_start_x = int(
+        expectation.edge_indicator_x - expectation.direction_unit_x * arrow_length_in_pixels
+    )
+    arrow_start_y = int(
+        expectation.edge_indicator_y - expectation.direction_unit_y * arrow_length_in_pixels
+    )
+    arrow_start_x = min(max(arrow_start_x, 2), frame_width - 2)
+    arrow_start_y = min(max(arrow_start_y, 2), frame_height - 2)
+    arrow_end_x = min(max(expectation.edge_indicator_x, 1), frame_width - 1)
+    arrow_end_y = min(max(expectation.edge_indicator_y, 1), frame_height - 1)
+
+    cv2.arrowedLine(
+        frame,
+        (arrow_start_x, arrow_start_y),
+        (arrow_end_x, arrow_end_y),
+        _OUT_OF_VIEW_INDICATOR_COLOR_BGR,
+        3,
+        tipLength=0.4,
+    )
+    bearing_label = (
+        f"ID:{track_result.track_id} "
+        f"{expectation.bearing_degrees_clockwise_from_up:.0f}deg"
+    )
+    label_x = min(max(arrow_start_x - 30, 4), frame_width - 190)
+    label_y = min(max(arrow_start_y - 8, 16), frame_height - 6)
+    cv2.putText(
+        frame,
+        bearing_label,
+        (label_x, label_y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        _OUT_OF_VIEW_INDICATOR_COLOR_BGR,
+        2,
+    )
 
 
 def render_frame_processing_result(
@@ -52,6 +95,9 @@ def render_frame_processing_result(
             )
 
     for track_result in frame_processing_result.track_results:
+        if track_result.is_out_of_view and track_result.off_screen_expectation is not None:
+            _draw_off_screen_indicator(annotated_frame, track_result)
+            continue
         track_color_bgr = _select_track_color_bgr(track_result)
         left_x, top_y, width, height = track_result.bounding_box
         cv2.rectangle(
