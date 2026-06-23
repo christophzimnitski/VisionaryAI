@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "visionary"
+version = "0.1.0"
+description = "A modular, tested multi-object tracking pipeline (detection, Kalman prediction, Hungarian association, re-identification)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python>=4.7",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+evaluation = ["motmetrics>=1.4"]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+visionary-track = "visionary.application:main"
+visionary-evaluate = "visionary.evaluation.mot_metrics_evaluation:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+# Lets the test suite import the package straight from ./src without an install.
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
