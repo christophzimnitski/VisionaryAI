@@ -8,10 +8,30 @@ identically regardless of the input.
 
 from __future__ import annotations
 
+from importlib import resources
 from typing import Iterator, Protocol
 
 import cv2
 import numpy as np
+
+_BUNDLED_ROCKET_SPRITE_RESOURCE = "assets/rocket_template.jpeg"
+
+
+def load_bundled_rocket_sprite_image() -> np.ndarray | None:
+    """Load the rocket sprite shipped as package data, or ``None`` if unavailable.
+
+    Using ``importlib.resources`` means the image is found whether the package is
+    run from source (``PYTHONPATH=src``) or installed as a wheel, regardless of the
+    current working directory.
+    """
+    try:
+        rocket_sprite_resource = resources.files("visionary").joinpath(
+            _BUNDLED_ROCKET_SPRITE_RESOURCE
+        )
+        with resources.as_file(rocket_sprite_resource) as rocket_sprite_path:
+            return cv2.imread(str(rocket_sprite_path), cv2.IMREAD_COLOR)
+    except (FileNotFoundError, ModuleNotFoundError):
+        return None
 
 
 class FrameSource(Protocol):
@@ -83,11 +103,13 @@ class SyntheticRocketSceneSource:
         self._random_number_generator = np.random.default_rng(random_seed)
         self._current_frame_index = 0
 
-        self._rocket_sprite_image = (
-            rocket_sprite_image
-            if rocket_sprite_image is not None
-            else self._build_default_rocket_sprite()
-        )
+        if rocket_sprite_image is None:
+            # Prefer the real rocket image bundled with the package; only fall back
+            # to a generated placeholder sprite if it cannot be loaded.
+            rocket_sprite_image = load_bundled_rocket_sprite_image()
+        if rocket_sprite_image is None:
+            rocket_sprite_image = self._build_placeholder_rocket_sprite()
+        self._rocket_sprite_image = rocket_sprite_image
         self._sprite_height, self._sprite_width = self._rocket_sprite_image.shape[:2]
 
         self._simulated_rockets: dict[str, dict] = {
@@ -97,7 +119,7 @@ class SyntheticRocketSceneSource:
         self.current_ground_truth_bounding_boxes: dict[str, tuple[int, int, int, int]] = {}
 
     @staticmethod
-    def _build_default_rocket_sprite() -> np.ndarray:
+    def _build_placeholder_rocket_sprite() -> np.ndarray:
         rocket_sprite_image = np.zeros((30, 60, 3), dtype=np.uint8)
         cv2.rectangle(rocket_sprite_image, (5, 5), (25, 55), (200, 200, 200), -1)
         cv2.circle(rocket_sprite_image, (15, 5), 5, (0, 0, 255), -1)
