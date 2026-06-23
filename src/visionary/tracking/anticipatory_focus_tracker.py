@@ -41,6 +41,11 @@ class PredictedTrackState:
     predicted_center_y: float
     predicted_bounding_box: BoundingBox
     clean_appearance_template_patch: np.ndarray | None
+    # Extra search-window margin reflecting how uncertain the prediction is. It
+    # grows while a track is out of view, because the predicted position drifts
+    # with no measurements to correct it, so a returning object must be searched
+    # for over a wider area.
+    search_region_expansion_in_pixels: int = 0
 
 
 @dataclass
@@ -93,7 +98,9 @@ class AnticipatoryFocusTracker:
             return self._build_coasting_placement(predicted_track_state, clamped_predicted_box)
 
         search_region_box = self._build_search_region_box(
-            predicted_track_state.predicted_bounding_box, frame.shape
+            predicted_track_state.predicted_bounding_box,
+            frame.shape,
+            predicted_track_state.search_region_expansion_in_pixels,
         )
         region_left_x, region_top_y, region_width, region_height = search_region_box
         template_height, template_width = template_patch.shape[:2]
@@ -257,16 +264,25 @@ class AnticipatoryFocusTracker:
     # -- geometry helpers -----------------------------------------------------
 
     def _build_search_region_box(
-        self, predicted_bounding_box: BoundingBox, frame_shape: tuple[int, ...]
+        self,
+        predicted_bounding_box: BoundingBox,
+        frame_shape: tuple[int, ...],
+        extra_expansion_in_pixels: int = 0,
     ) -> BoundingBox:
         left_x, top_y, width, height = predicted_bounding_box
-        horizontal_margin = max(
-            self._configuration.focus_search_region_minimum_margin_in_pixels,
-            int(self._configuration.focus_search_region_margin_ratio * width),
+        horizontal_margin = (
+            max(
+                self._configuration.focus_search_region_minimum_margin_in_pixels,
+                int(self._configuration.focus_search_region_margin_ratio * width),
+            )
+            + extra_expansion_in_pixels
         )
-        vertical_margin = max(
-            self._configuration.focus_search_region_minimum_margin_in_pixels,
-            int(self._configuration.focus_search_region_margin_ratio * height),
+        vertical_margin = (
+            max(
+                self._configuration.focus_search_region_minimum_margin_in_pixels,
+                int(self._configuration.focus_search_region_margin_ratio * height),
+            )
+            + extra_expansion_in_pixels
         )
         expanded_box = (
             left_x - horizontal_margin,

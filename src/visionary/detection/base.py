@@ -30,3 +30,16 @@ class ObjectDetector(Protocol):
     def detect_objects_in_frame(self, frame: np.ndarray) -> list[Detection]:
         """Return all candidate detections found in ``frame``."""
         ...
+
+
+class NullObjectDetector:
+    """A detector that finds nothing -- used when objects are *designated*, not discovered.
+
+    On a panning camera the motion-difference detector is useless (the whole frame
+    moves), and a static object such as a painting never produces motion anyway. In
+    that mode the objects of interest are registered explicitly and held by the
+    focus layer, so the filter layer should simply discover nothing.
+    """
+
+    def detect_objects_in_frame(self, frame: np.ndarray) -> list[Detection]:
+        return []

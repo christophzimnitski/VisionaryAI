@@ -39,7 +39,7 @@ class TrackerConfiguration:
     # Object permanence: while a track's expected position is *outside* the frame
     # it is held this many frames before being given up, far longer than an
     # in-view miss, because a thing that left the frame is expected to be absent.
-    maximum_frames_to_retain_out_of_view_track: int = 150
+    maximum_frames_to_retain_out_of_view_track: int = 300
 
     # --- Appearance re-identification (active memory) -------------------------
     # When a detection appears that no in-view track explains, it is compared to

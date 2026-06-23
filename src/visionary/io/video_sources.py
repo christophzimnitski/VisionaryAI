@@ -257,3 +257,143 @@ class SyntheticRocketSceneSource:
             if frame is None:
                 return
             yield frame, dict(self.current_ground_truth_bounding_boxes)
+
+
+class PanningCameraSceneSource:
+    """A static, textured 'room' that a virtual camera pans across.
+
+    The mirror image of the rocket scene: here the objects are *static* in the
+    world and the camera moves -- the configuration the room/painting use case
+    needs. The wall is textured so frame-to-frame camera motion can be estimated
+    from it (egomotion), and the 'paintings' hang at fixed places on it. Each frame
+    is the camera's current viewport onto the wall; the source exposes every
+    painting's ground-truth box within that viewport, or its absence once the
+    camera has panned past it.
+    """
+
+    def __init__(
+        self,
+        frame_width_in_pixels: int = 640,
+        frame_height_in_pixels: int = 480,
+        total_frame_count: int | None = None,
+        random_seed: int = 0,
+    ) -> None:
+        self._viewport_width_in_pixels = frame_width_in_pixels
+        self._viewport_height_in_pixels = frame_height_in_pixels
+        self._total_frame_count = total_frame_count
+        self._current_frame_index = 0
+
+        self._wall_canvas_width = frame_width_in_pixels + 440
+        self._wall_canvas_height = frame_height_in_pixels + 160
+        self._viewport_top_y = 100
+        self._maximum_pan_offset_x = self._wall_canvas_width - frame_width_in_pixels
+
+        random_number_generator = np.random.default_rng(random_seed)
+        self._wall_canvas = self._build_textured_wall(random_number_generator)
+        # Paintings: fixed (left_x, top_y, width, height) boxes on the wall, plus a
+        # distinct fill colour, so each can be re-recognised by its features.
+        self._paintings: dict[str, tuple[tuple[int, int, int, int], tuple[int, int, int]]] = {
+            "painting_red": ((150, 250, 84, 104), (40, 40, 205)),
+            "painting_blue": ((900, 230, 96, 86), (205, 120, 40)),
+        }
+        self._paint_paintings_onto_wall()
+        self.current_ground_truth_bounding_boxes: dict[str, tuple[int, int, int, int]] = {}
+
+    def _build_textured_wall(self, random_number_generator: np.random.Generator) -> np.ndarray:
+        wall = random_number_generator.integers(
+            50, 80, (self._wall_canvas_height, self._wall_canvas_width, 3), dtype=np.uint8
+        )
+        # Scatter small rectangles so the wall has the corners ORB needs to lock onto.
+        for _ in range(900):
+            patch_left_x = int(random_number_generator.integers(0, self._wall_canvas_width - 26))
+            patch_top_y = int(random_number_generator.integers(0, self._wall_canvas_height - 26))
+            patch_width = int(random_number_generator.integers(6, 24))
+            patch_height = int(random_number_generator.integers(6, 24))
+            patch_color = [int(channel) for channel in random_number_generator.integers(30, 200, 3)]
+            cv2.rectangle(
+                wall,
+                (patch_left_x, patch_top_y),
+                (patch_left_x + patch_width, patch_top_y + patch_height),
+                patch_color,
+                -1,
+            )
+        return wall
+
+    def _paint_paintings_onto_wall(self) -> None:
+        for (left_x, top_y, width, height), fill_color in self._paintings.values():
+            cv2.rectangle(
+                self._wall_canvas, (left_x, top_y), (left_x + width, top_y + height), fill_color, -1
+            )
+            cv2.rectangle(
+                self._wall_canvas,
+                (left_x, top_y),
+                (left_x + width, top_y + height),
+                (245, 245, 245),
+                3,
+            )
+            cv2.line(
+                self._wall_canvas,
+                (left_x + 8, top_y + 8),
+                (left_x + width - 8, top_y + height - 8),
+                (245, 245, 245),
+                2,
+            )
+
+    def _current_pan_offset_x(self) -> int:
+        # Pan right to the far wall, then back -- a triangle wave so the camera
+        # sweeps each painting out of view and later brings it back.
+        pan_cycle_length = 200
+        phase = self._current_frame_index % pan_cycle_length
+        half_cycle = pan_cycle_length // 2
+        if phase <= half_cycle:
+            fraction = phase / half_cycle
+        else:
+            fraction = (pan_cycle_length - phase) / half_cycle
+        return int(self._maximum_pan_offset_x * fraction)
+
+    def read_next_frame(self) -> np.ndarray | None:
+        if (
+            self._total_frame_count is not None
+            and self._current_frame_index >= self._total_frame_count
+        ):
+            return None
+        self._current_frame_index += 1
+
+        pan_offset_x = self._current_pan_offset_x()
+        viewport_top_y = self._viewport_top_y
+        viewport = self._wall_canvas[
+            viewport_top_y : viewport_top_y + self._viewport_height_in_pixels,
+            pan_offset_x : pan_offset_x + self._viewport_width_in_pixels,
+        ].copy()
+
+        self.current_ground_truth_bounding_boxes = {}
+        for painting_identifier, painting_definition in self._paintings.items():
+            (left_x, top_y, width, height), _fill_color = painting_definition
+            viewport_left_x = left_x - pan_offset_x
+            viewport_top_within = top_y - viewport_top_y
+            visible_left_x = max(0, viewport_left_x)
+            visible_top_y = max(0, viewport_top_within)
+            visible_right_x = min(self._viewport_width_in_pixels, viewport_left_x + width)
+            visible_bottom_y = min(self._viewport_height_in_pixels, viewport_top_within + height)
+            if visible_right_x <= visible_left_x or visible_bottom_y <= visible_top_y:
+                continue
+            self.current_ground_truth_bounding_boxes[painting_identifier] = (
+                visible_left_x,
+                visible_top_y,
+                visible_right_x - visible_left_x,
+                visible_bottom_y - visible_top_y,
+            )
+        return viewport
+
+    def release(self) -> None:  # noqa: D401 - nothing to release for the simulation
+        return None
+
+    def iterate_frames_with_ground_truth(
+        self,
+    ) -> Iterator[tuple[np.ndarray, dict[str, tuple[int, int, int, int]]]]:
+        """Yield ``(frame, ground_truth_bounding_boxes)`` until the stream ends."""
+        while True:
+            frame = self.read_next_frame()
+            if frame is None:
+                return
+            yield frame, dict(self.current_ground_truth_bounding_boxes)

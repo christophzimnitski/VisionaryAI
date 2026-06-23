@@ -107,6 +107,31 @@ class MultiObjectTracker:
     def active_track_count(self) -> int:
         return len(self._active_tracks_by_id)
 
+    def register_object_of_interest(
+        self, bounding_box: BoundingBox, frame: np.ndarray
+    ) -> str:
+        """Designate an object to track from now on, seeding its identity and memory.
+
+        Used when objects are pointed out rather than discovered (e.g. a static
+        painting a panning camera should keep track of). The new track is seeded
+        with the object's appearance template and intrinsic feature memory so the
+        focus layer can hold it and so it can be re-recognised after it leaves view.
+        """
+        frame = self._resize_frame_if_needed(frame)
+        appearance_trait_vector = extract_appearance_trait_vector(frame, bounding_box)
+        registered_track = TrackedObject(bounding_box, self._frame_index, appearance_trait_vector)
+        registered_track.refresh_clean_appearance_template(
+            self._extract_image_patch(frame, bounding_box)
+        )
+        self._record_clean_feature_observation(registered_track, frame, bounding_box)
+        self._active_tracks_by_id[registered_track.track_id] = registered_track
+        _logger.info(
+            "Registered object of interest as track %s at frame %d",
+            registered_track.track_id,
+            self._frame_index,
+        )
+        return registered_track.track_id
+
     def process_frame(self, frame: np.ndarray) -> FrameProcessingResult:
         self._frame_index += 1
         frame = self._resize_frame_if_needed(frame)
@@ -243,6 +268,11 @@ class MultiObjectTracker:
                     predicted_center_y=predicted_center_y,
                     predicted_bounding_box=predicted_bounding_box,
                     clean_appearance_template_patch=active_track.clean_appearance_template_patch,
+                    # Widen the search the longer the track has been out of view,
+                    # to absorb the prediction drift accumulated with no measurements.
+                    search_region_expansion_in_pixels=min(
+                        active_track.consecutive_off_frame_count, 140
+                    ),
                 )
             )
 

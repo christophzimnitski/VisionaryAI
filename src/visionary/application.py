@@ -14,14 +14,18 @@ renderer); all real work lives in the library modules it imports.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
+from typing import Callable
 
 import cv2
 
 from visionary.configuration import TrackerConfiguration
+from visionary.detection.base import NullObjectDetector
 from visionary.detection.motion_difference_detector import MotionDifferenceDetector
 from visionary.io.video_sources import (
     FrameSource,
+    PanningCameraSceneSource,
     SyntheticRocketSceneSource,
     VideoFileFrameSource,
     WebcamFrameSource,
@@ -43,9 +47,9 @@ def _parse_command_line_arguments() -> argparse.Namespace:
     )
     argument_parser.add_argument(
         "--source",
-        choices=["synthetic", "webcam", "video"],
+        choices=["synthetic", "webcam", "video", "room"],
         default="synthetic",
-        help="Where frames come from.",
+        help="Where frames come from ('room' is the panning-camera demo).",
     )
     argument_parser.add_argument(
         "--video-path", default=None, help="Path to a video file when --source video."
@@ -76,6 +80,12 @@ def _build_frame_source(
         if not command_line_arguments.video_path:
             raise SystemExit("--source video requires --video-path")
         return VideoFileFrameSource(command_line_arguments.video_path)
+    if command_line_arguments.source == "room":
+        return PanningCameraSceneSource(
+            frame_width_in_pixels=configuration.frame_width_in_pixels,
+            frame_height_in_pixels=configuration.frame_height_in_pixels,
+            total_frame_count=command_line_arguments.max_frames,
+        )
     return SyntheticRocketSceneSource(
         frame_width_in_pixels=configuration.frame_width_in_pixels,
         frame_height_in_pixels=configuration.frame_height_in_pixels,
@@ -83,12 +93,27 @@ def _build_frame_source(
     )
 
 
+def _register_designated_painting_on_first_frame(
+    tracker: MultiObjectTracker, frame, frame_source: FrameSource
+) -> None:
+    """Point the tracker at the painting in the panning-camera demo's first frame."""
+    ground_truth_boxes = getattr(frame_source, "current_ground_truth_bounding_boxes", {})
+    designated_painting_box = ground_truth_boxes.get("painting_red")
+    if designated_painting_box is not None:
+        tracker.register_object_of_interest(designated_painting_box, frame)
+
+
 def run_tracking_loop(
     frame_source: FrameSource,
     tracker: MultiObjectTracker,
     display_window_enabled: bool,
+    after_first_frame: Callable[[MultiObjectTracker, object, FrameSource], None] | None = None,
 ) -> None:
-    """Read frames until the source is exhausted or the user quits, tracking each."""
+    """Read frames until the source is exhausted or the user quits, tracking each.
+
+    ``after_first_frame`` is an optional hook (used by the panning-camera demo to
+    designate the object to follow once the first frame has primed the tracker).
+    """
     frame_index = 0
     try:
         while True:
@@ -98,6 +123,8 @@ def run_tracking_loop(
             frame_index += 1
 
             frame_processing_result = tracker.process_frame(frame)
+            if frame_index == 1 and after_first_frame is not None:
+                after_first_frame(tracker, frame, frame_source)
             annotated_frame = render_frame_processing_result(frame, frame_processing_result)
             annotated_frame = draw_frame_metadata(
                 annotated_frame, tracker.active_track_count, frame_index
@@ -118,13 +145,28 @@ def main() -> None:
     command_line_arguments = _parse_command_line_arguments()
     configuration = TrackerConfiguration()
 
+    is_panning_camera_demo = command_line_arguments.source == "room"
+    if is_panning_camera_demo:
+        # A moving camera over static objects: estimate egomotion to drive the
+        # predictions, and designate the object to follow rather than discover it.
+        configuration = dataclasses.replace(
+            configuration, enable_camera_motion_compensation=True
+        )
+        object_detector = NullObjectDetector()
+        after_first_frame = _register_designated_painting_on_first_frame
+    else:
+        object_detector = MotionDifferenceDetector(configuration)
+        after_first_frame = None
+
     frame_source = _build_frame_source(command_line_arguments, configuration)
-    motion_detector = MotionDifferenceDetector(configuration)
-    tracker = MultiObjectTracker(motion_detector, configuration)
+    tracker = MultiObjectTracker(object_detector, configuration)
 
     _logger.info("Starting tracking loop with source '%s'", command_line_arguments.source)
     run_tracking_loop(
-        frame_source, tracker, display_window_enabled=not command_line_arguments.headless
+        frame_source,
+        tracker,
+        display_window_enabled=not command_line_arguments.headless,
+        after_first_frame=after_first_frame,
     )
 
 
