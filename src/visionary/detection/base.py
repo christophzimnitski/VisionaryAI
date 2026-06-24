@@ -15,7 +15,6 @@ import numpy as np
 
 from visionary.geometry import BoundingBox
 
-
 @dataclass(frozen=True)
 class Detection:
     """A single detected object in one frame."""

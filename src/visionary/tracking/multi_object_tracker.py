@@ -724,9 +724,9 @@ class MultiObjectTracker:
         # present usually means two objects have merged into one blob.
         active_track_count = len(self._active_tracks_by_id)
         if detection_count < active_track_count and active_track_count > 1:
-            _logger.info(
-                "Collision or occlusion detected at frame %d", self._frame_index
-            )
+            #_logger.info(
+            #    "Collision or occlusion detected at frame %d", self._frame_index
+            #)
             return True
         return False
 
@@ -738,8 +738,11 @@ class MultiObjectTracker:
         """True if a focus-tracked object already explains this filter-layer change.
 
         A change counts as claimed if it overlaps a claimed region above the
-        association IoU gate, or if a claimed region is largely contained inside
-        it (the merged-blob case during a collision).
+        association IoU gate, or if either box is largely contained inside the
+        other. The two containment directions matter for different collision
+        artefacts: a claimed box inside the change is the merged-blob case, while
+        the change inside a claimed box is a small fragment shed during a collision
+        -- which must not be allowed to spawn a spurious (too-small) new track.
         """
         for claimed_region_bounding_box in claimed_region_bounding_boxes:
             if (
@@ -747,10 +750,16 @@ class MultiObjectTracker:
                 > self._configuration.intersection_over_union_gate_threshold
             ):
                 return True
-            claimed_region_containment = self._fraction_of_first_box_inside_second(
+            claimed_region_inside_detection = self._fraction_of_first_box_inside_second(
                 claimed_region_bounding_box, detection_bounding_box
             )
-            if claimed_region_containment > _CLAIMED_REGION_CONTAINMENT_THRESHOLD:
+            detection_inside_claimed_region = self._fraction_of_first_box_inside_second(
+                detection_bounding_box, claimed_region_bounding_box
+            )
+            if (
+                claimed_region_inside_detection > _CLAIMED_REGION_CONTAINMENT_THRESHOLD
+                or detection_inside_claimed_region > _CLAIMED_REGION_CONTAINMENT_THRESHOLD
+            ):
                 return True
         return False
 

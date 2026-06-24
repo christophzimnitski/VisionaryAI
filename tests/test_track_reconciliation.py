@@ -65,6 +65,27 @@ def test_reconciliation_culls_the_younger_duplicate_track() -> None:
     assert surviving_results == []
 
 
+def test_a_fragment_inside_a_claimed_region_does_not_spawn_a_new_track() -> None:
+    """A small motion fragment shed during a collision must count as already claimed.
+
+    Such a fragment sits inside a tracked object's region but overlaps its box too
+    little to clear the IoU gate, so without the containment check it would spawn a
+    spurious, too-small track that then steals the real object.
+    """
+    tracker = _build_tracker()
+    claimed_region_boxes = [(250, 260, 74, 72)]
+
+    fragment_inside_claimed_region = (268, 288, 32, 31)
+    assert tracker._detection_is_already_claimed(
+        fragment_inside_claimed_region, claimed_region_boxes
+    )
+
+    detection_well_outside = (10, 10, 40, 40)
+    assert not tracker._detection_is_already_claimed(
+        detection_well_outside, claimed_region_boxes
+    )
+
+
 def test_identity_is_stable_while_objects_are_separated() -> None:
     """Over a multi-crossing run, identity should hold whenever objects are apart.
 
