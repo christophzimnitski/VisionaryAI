@@ -127,6 +127,95 @@ def render_frame_processing_result(
     return annotated_frame
 
 
+_MISSING_OBJECT_COLOR_BGR = (0, 0, 255)
+_FOUND_DISPLACED_OBJECT_COLOR_BGR = (255, 0, 255)
+# Drawn for a displacement end whose box size is not carried in the conclusion.
+_DISPLACEMENT_MARKER_HALF_WIDTH = 34
+_DISPLACEMENT_MARKER_HALF_HEIGHT = 28
+
+
+def render_room_scene_observation(frame: np.ndarray, room_scene_observation) -> np.ndarray:
+    """Annotate a frame with tracks plus the room monitor's spatial reasoning.
+
+    On top of the usual track overlay this draws, in world-projected positions: a
+    red box where an object used to be (its place is now empty), and a magenta box
+    where a displaced object was found, labelled with where it moved from. Together
+    these are the "there was a pillow here" / "the missing pillow is on the floor"
+    annotations.
+    """
+    annotated_frame = render_frame_processing_result(
+        frame, room_scene_observation.frame_processing_result, draw_raw_detections=False
+    )
+    frame_height, frame_width = annotated_frame.shape[:2]
+    world_offset_x, world_offset_y = room_scene_observation.world_offset
+
+    for missing_object_marker in room_scene_observation.missing_object_markers:
+        if missing_object_marker.frame_bounding_box is not None:
+            _draw_labelled_box(
+                annotated_frame,
+                missing_object_marker.frame_bounding_box,
+                "MISSING: was here",
+                _MISSING_OBJECT_COLOR_BGR,
+            )
+
+    for displacement_conclusion in room_scene_observation.all_displacement_conclusions:
+        from_frame_x = displacement_conclusion.from_world_position[0] - world_offset_x
+        from_frame_y = displacement_conclusion.from_world_position[1] - world_offset_y
+        if _point_is_in_frame(from_frame_x, from_frame_y, frame_width, frame_height):
+            _draw_labelled_box(
+                annotated_frame,
+                _marker_box_around(from_frame_x, from_frame_y),
+                "was here (moved away)",
+                _MISSING_OBJECT_COLOR_BGR,
+            )
+
+        to_frame_x = displacement_conclusion.to_world_position[0] - world_offset_x
+        to_frame_y = displacement_conclusion.to_world_position[1] - world_offset_y
+        if _point_is_in_frame(to_frame_x, to_frame_y, frame_width, frame_height):
+            _draw_labelled_box(
+                annotated_frame,
+                _marker_box_around(to_frame_x, to_frame_y),
+                "FOUND (moved here)",
+                _FOUND_DISPLACED_OBJECT_COLOR_BGR,
+            )
+
+    return annotated_frame
+
+
+def _draw_labelled_box(
+    frame: np.ndarray,
+    bounding_box: tuple[int, int, int, int],
+    label: str,
+    color_bgr: tuple[int, int, int],
+) -> None:
+    left_x, top_y, width, height = (int(value) for value in bounding_box)
+    cv2.rectangle(frame, (left_x, top_y), (left_x + width, top_y + height), color_bgr, 2)
+    cv2.putText(
+        frame,
+        label,
+        (left_x, max(top_y - 8, 12)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        color_bgr,
+        2,
+    )
+
+
+def _marker_box_around(center_x: float, center_y: float) -> tuple[int, int, int, int]:
+    return (
+        int(center_x) - _DISPLACEMENT_MARKER_HALF_WIDTH,
+        int(center_y) - _DISPLACEMENT_MARKER_HALF_HEIGHT,
+        2 * _DISPLACEMENT_MARKER_HALF_WIDTH,
+        2 * _DISPLACEMENT_MARKER_HALF_HEIGHT,
+    )
+
+
+def _point_is_in_frame(
+    point_x: float, point_y: float, frame_width: int, frame_height: int
+) -> bool:
+    return 0 <= point_x < frame_width and 0 <= point_y < frame_height
+
+
 def draw_frame_metadata(
     frame: np.ndarray, tracked_object_count: int, frame_index: int
 ) -> np.ndarray:

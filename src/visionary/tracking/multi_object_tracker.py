@@ -100,12 +100,22 @@ class MultiObjectTracker:
         self._lost_tracks_by_id: dict[str, TrackedObject] = {}
         self._previous_grayscale_frame: np.ndarray | None = None
         self._frame_index = 0
+        # The most recent frame-to-frame egomotion homography this tracker
+        # estimated (``None`` when compensation is disabled or estimation failed).
+        # Exposed so a higher layer can reuse it -- e.g. to integrate camera pose
+        # for a room map -- without paying for a second ORB pass.
+        self._most_recent_camera_motion_homography: np.ndarray | None = None
 
     # -- public API -----------------------------------------------------------
 
     @property
     def active_track_count(self) -> int:
         return len(self._active_tracks_by_id)
+
+    @property
+    def most_recent_camera_motion_homography(self) -> np.ndarray | None:
+        """The last frame-to-frame egomotion homography, for reuse by a room map."""
+        return self._most_recent_camera_motion_homography
 
     def register_object_of_interest(
         self, bounding_box: BoundingBox, frame: np.ndarray
@@ -429,10 +439,12 @@ class MultiObjectTracker:
         self, current_grayscale_frame: np.ndarray
     ) -> np.ndarray | None:
         if not self._configuration.enable_camera_motion_compensation:
+            self._most_recent_camera_motion_homography = None
             return None
-        return estimate_camera_motion_homography(
+        self._most_recent_camera_motion_homography = estimate_camera_motion_homography(
             self._previous_grayscale_frame, current_grayscale_frame, self._configuration
         )
+        return self._most_recent_camera_motion_homography
 
     def _predict_tracks(
         self,
@@ -488,7 +500,7 @@ class MultiObjectTracker:
         lost_tracks: list[TrackedObject],
         lost_track_prediction: "MultiObjectTracker._TrackPredictionBundle",
         detection_bounding_boxes: list[BoundingBox],
-        detection_appearance_trait_vector_by_index: dict[str, np.ndarray],
+        detection_appearance_trait_vector_by_index: dict[int, np.ndarray],
         unclaimed_detection_indices: list[int],
         track_results: list[TrackResult],
     ) -> list[int]:
@@ -555,7 +567,7 @@ class MultiObjectTracker:
         self,
         frame: np.ndarray,
         detection_bounding_boxes: list[BoundingBox],
-        detection_appearance_trait_vector_by_index: dict[str, np.ndarray],
+        detection_appearance_trait_vector_by_index: dict[int, np.ndarray],
         unclaimed_detection_indices: list[int],
         track_results: list[TrackResult],
     ) -> None:

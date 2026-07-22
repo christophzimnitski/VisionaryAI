@@ -41,6 +41,40 @@ class ObservedObjectFeatures:
     aspect_ratio: float
 
 
+def compare_observed_object_features(
+    first_features: ObservedObjectFeatures, second_features: ObservedObjectFeatures
+) -> float:
+    """Return a ``[0, 1]`` partial-match score between two intrinsic snapshots.
+
+    This is the same brightness-invariant comparison the active memory uses to
+    recognise a returning object, exposed as a free function so that two *fresh
+    observations* can be compared -- not only a remembered memory against one
+    observation. The displacement reasoner needs exactly this: deciding that the
+    thing that vanished from one place is the thing that appeared in another is a
+    comparison between two observations, neither of which is the running memory.
+    """
+    chromaticity_distance = float(
+        np.linalg.norm(
+            _normalized_chromaticity(first_features.mean_color_bgr)
+            - _normalized_chromaticity(second_features.mean_color_bgr)
+        )
+    )
+    color_similarity = max(
+        0.0, 1.0 - chromaticity_distance / _CHROMATICITY_DISTANCE_AT_ZERO_SIMILARITY
+    )
+    size_similarity = _ratio_similarity(
+        first_features.normalized_size, second_features.normalized_size
+    )
+    aspect_similarity = _ratio_similarity(
+        first_features.aspect_ratio, second_features.aspect_ratio
+    )
+    return (
+        _COLOR_SIMILARITY_WEIGHT * color_similarity
+        + _SIZE_SIMILARITY_WEIGHT * size_similarity
+        + _ASPECT_SIMILARITY_WEIGHT * aspect_similarity
+    )
+
+
 def describe_observed_object(
     image_patch: np.ndarray, bounding_box: BoundingBox, frame_shape: tuple[int, ...]
 ) -> ObservedObjectFeatures | None:
@@ -103,24 +137,12 @@ class ObjectFeatureMemory:
         """
         if not self.has_been_observed:
             return 0.0
-
-        chromaticity_distance = float(
-            np.linalg.norm(
-                _normalized_chromaticity(self.mean_color_bgr)
-                - _normalized_chromaticity(observed_features.mean_color_bgr)
-            )
+        remembered_features = ObservedObjectFeatures(
+            mean_color_bgr=self.mean_color_bgr,
+            normalized_size=self.normalized_size,
+            aspect_ratio=self.aspect_ratio,
         )
-        color_similarity = max(
-            0.0, 1.0 - chromaticity_distance / _CHROMATICITY_DISTANCE_AT_ZERO_SIMILARITY
-        )
-        size_similarity = _ratio_similarity(self.normalized_size, observed_features.normalized_size)
-        aspect_similarity = _ratio_similarity(self.aspect_ratio, observed_features.aspect_ratio)
-
-        return (
-            _COLOR_SIMILARITY_WEIGHT * color_similarity
-            + _SIZE_SIMILARITY_WEIGHT * size_similarity
-            + _ASPECT_SIMILARITY_WEIGHT * aspect_similarity
-        )
+        return compare_observed_object_features(remembered_features, observed_features)
 
 
 def _normalized_chromaticity(color_bgr: np.ndarray) -> np.ndarray:

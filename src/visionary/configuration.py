@@ -116,3 +116,38 @@ class TrackerConfiguration:
     camera_motion_orb_feature_count: int = 2000
     camera_motion_minimum_match_count: int = 8
     camera_motion_ransac_reprojection_threshold: float = 3.0
+
+    # --- Salient-region detection (auto-discovery of resting big objects) -----
+    # A panning camera over a still room produces no motion, so resting objects
+    # such as pillows are found instead by their *distinctness*: regions whose
+    # colour stands clearly apart from the dominant background (wall / floor) and
+    # whose area falls in the "laptop-sized or bigger" band are proposed as
+    # objects. These knobs gate that proposal.
+    salient_region_color_quantization_levels: int = 6
+    salient_region_minimum_area_in_pixels: float = 1200.0
+    salient_region_maximum_area_fraction_of_frame: float = 0.45
+    salient_region_background_color_share_threshold: float = 0.18
+    salient_region_morphological_kernel_size: tuple[int, int] = (5, 5)
+
+    # --- World anchors + displacement reasoning -------------------------------
+    # A big object the system locks onto becomes a persistent *anchor* placed in
+    # world (room) coordinates, so the camera can pan away and later check whether
+    # the object is still where it left it. An anchor whose spot returns to view
+    # this many frames running without the object being re-found is declared to
+    # have *disappeared* -- the negative change the reasoner pairs with a positive
+    # change (a new object appearing elsewhere) to conclude "it moved to there".
+    anchor_confirmation_minimum_feature_similarity: float = 0.55
+    anchor_confirmation_maximum_world_distance_in_pixels: float = 80.0
+    anchor_consecutive_refutations_before_declared_missing: int = 6
+    anchor_in_view_border_margin_in_pixels: int = 12
+    # Frames at the start during which the room is just being learned: objects
+    # discovered now are taken to be part of the initial scene, not things that
+    # *appeared*, so priming a room never fabricates a displacement.
+    scene_priming_frame_count: int = 8
+    # The reasoner links a disappearance to an appearance only when they look alike
+    # enough, are far enough apart to be a genuine move (not a re-acquisition in
+    # place), and are close enough in time that the events plausibly describe one
+    # displacement.
+    displacement_reasoning_minimum_feature_similarity: float = 0.5
+    displacement_reasoning_minimum_world_distance_in_pixels: float = 70.0
+    displacement_reasoning_maximum_event_age_in_frames: int = 900

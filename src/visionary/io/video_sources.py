@@ -63,14 +63,44 @@ class VideoFileFrameSource:
 
 
 class WebcamFrameSource:
-    """Reads frames from a live camera device."""
+    """Reads frames from a live camera device.
 
-    def __init__(self, camera_device_index: int = 0) -> None:
+    Two camera behaviours actively fight change detection on a panning camera, so
+    this source tries to tame them: it requests a fixed capture resolution, and it
+    asks the driver to hold exposure and white balance steady. Auto-exposure and
+    auto-white-balance re-meter as the camera pans, which makes the *same* wall
+    change brightness and colour and look like a change when nothing moved.
+    Cameras may ignore these requests -- they are best-effort, never required.
+    """
+
+    def __init__(
+        self,
+        camera_device_index: int = 0,
+        frame_width_in_pixels: int | None = None,
+        frame_height_in_pixels: int | None = None,
+        hold_exposure_and_white_balance_steady: bool = True,
+    ) -> None:
         self._video_capture = cv2.VideoCapture(camera_device_index)
         if not self._video_capture.isOpened():
             raise RuntimeError(
                 f"Could not open webcam at device index {camera_device_index}"
             )
+        if frame_width_in_pixels is not None:
+            self._video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width_in_pixels)
+        if frame_height_in_pixels is not None:
+            self._video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height_in_pixels)
+        if hold_exposure_and_white_balance_steady:
+            self._request_steady_exposure_and_white_balance()
+
+    def _request_steady_exposure_and_white_balance(self) -> None:
+        # The "auto" properties are quirky across drivers (the 0.25 magic value is
+        # the common incantation for "manual" on V4L2 backends); wrapping in a
+        # try/except keeps an unsupported camera from crashing the source.
+        try:
+            self._video_capture.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
+            self._video_capture.set(cv2.CAP_PROP_AUTO_WB, 0.0)
+        except cv2.error:
+            return
 
     def read_next_frame(self) -> np.ndarray | None:
         frame_was_read, frame = self._video_capture.read()
@@ -257,6 +287,140 @@ class SyntheticRocketSceneSource:
             if frame is None:
                 return
             yield frame, dict(self.current_ground_truth_bounding_boxes)
+
+
+class RoomWithMovableObjectsSceneSource:
+    """A panning room where an object is *moved while the camera looks away*.
+
+    This is the headline scenario, made deterministic. A camera looks at a "bed"
+    (a blanket with two identical pillows on it), pans right to a "desk", and while
+    the bed is out of view the scene mutates: one pillow vanishes from the bed and
+    a matching pillow appears on the floor by the desk. The camera then pans back.
+
+    The point is that the move is *never observed* -- there is no continuous motion
+    to track from bed to floor. The room monitor must instead notice, on the return
+    pan, that a pillow's place on the bed is empty (a disappearance) and that a new
+    pillow turned up by the desk (an appearance), and reason that they are the same
+    pillow. The background is faintly textured so egomotion can be estimated, yet
+    quantizes to a couple of dominant colours so the salient-region detector still
+    finds the distinctly-coloured furniture.
+    """
+
+    _PILLOW_COLOR_BGR = (235, 235, 235)
+    _BLANKET_COLOR_BGR = (150, 110, 40)
+    _DESK_COLOR_BGR = (40, 70, 110)
+
+    def __init__(
+        self,
+        frame_width_in_pixels: int = 640,
+        frame_height_in_pixels: int = 480,
+        total_frame_count: int | None = 132,
+        random_seed: int = 0,
+    ) -> None:
+        self._viewport_width_in_pixels = frame_width_in_pixels
+        self._viewport_height_in_pixels = frame_height_in_pixels
+        self._total_frame_count = total_frame_count
+        self._current_frame_index = 0
+
+        self._room_canvas_width = 1200
+        self._room_canvas_height = frame_height_in_pixels
+
+        # Static furniture in world (room) coordinates: (left_x, top_y, width, height).
+        self._blanket_world_box = (70, 200, 240, 110)
+        self._pillow_left_world_box = (110, 210, 64, 48)
+        self._pillow_right_world_box = (210, 210, 64, 48)
+        self._desk_world_box = (700, 250, 150, 120)
+        # The pillow that will appear on the floor by the desk after the move.
+        self._floor_pillow_world_box = (760, 400, 64, 48)
+        self._scene_mutation_frame_index = 60
+        self._scene_has_been_mutated = False
+
+        random_number_generator = np.random.default_rng(random_seed)
+        self._room_canvas = self._build_faintly_textured_room(random_number_generator)
+        self._paint_static_furniture()
+
+    def _build_faintly_textured_room(
+        self, random_number_generator: np.random.Generator
+    ) -> np.ndarray:
+        """A low-contrast two-tone texture: corners for egomotion, few colours."""
+        # Two grey tones that share one coarse colour bin, so the whole wall reads
+        # as a single background colour to the salient detector, yet differ enough
+        # to give egomotion plenty of corners to lock onto.
+        room_canvas = np.full(
+            (self._room_canvas_height, self._room_canvas_width, 3), 50, dtype=np.uint8
+        )
+        for _ in range(1800):
+            patch_left_x = int(random_number_generator.integers(0, self._room_canvas_width - 20))
+            patch_top_y = int(random_number_generator.integers(0, self._room_canvas_height - 20))
+            patch_width = int(random_number_generator.integers(6, 18))
+            patch_height = int(random_number_generator.integers(6, 18))
+            cv2.rectangle(
+                room_canvas,
+                (patch_left_x, patch_top_y),
+                (patch_left_x + patch_width, patch_top_y + patch_height),
+                (80, 80, 80),
+                -1,
+            )
+        return room_canvas
+
+    def _paint_static_furniture(self) -> None:
+        self._fill_world_box(self._blanket_world_box, self._BLANKET_COLOR_BGR)
+        self._fill_world_box(self._pillow_left_world_box, self._PILLOW_COLOR_BGR)
+        self._fill_world_box(self._pillow_right_world_box, self._PILLOW_COLOR_BGR)
+        self._fill_world_box(self._desk_world_box, self._DESK_COLOR_BGR)
+
+    def _fill_world_box(
+        self, world_box: tuple[int, int, int, int], color_bgr: tuple[int, int, int]
+    ) -> None:
+        left_x, top_y, width, height = world_box
+        cv2.rectangle(
+            self._room_canvas, (left_x, top_y), (left_x + width, top_y + height), color_bgr, -1
+        )
+
+    def _mutate_scene_moving_a_pillow_to_the_floor(self) -> None:
+        """Remove the right bed pillow (revealing blanket) and add a floor pillow."""
+        # Erase the right pillow by repainting the blanket it rested on.
+        self._fill_world_box(self._pillow_right_world_box, self._BLANKET_COLOR_BGR)
+        self._fill_world_box(self._floor_pillow_world_box, self._PILLOW_COLOR_BGR)
+        self._scene_has_been_mutated = True
+
+    def _current_pan_offset_x(self) -> int:
+        """Hold on the bed, pan right to the desk, then pan back to the bed."""
+        frame_index = self._current_frame_index
+        hold_frames = 12
+        pan_speed_pixels_per_frame = 8
+        maximum_pan_offset = 480
+        pan_out_frames = maximum_pan_offset // pan_speed_pixels_per_frame
+        if frame_index <= hold_frames:
+            return 0
+        if frame_index <= hold_frames + pan_out_frames:
+            return (frame_index - hold_frames) * pan_speed_pixels_per_frame
+        frames_panning_back = frame_index - hold_frames - pan_out_frames
+        return max(0, maximum_pan_offset - frames_panning_back * pan_speed_pixels_per_frame)
+
+    def read_next_frame(self) -> np.ndarray | None:
+        if (
+            self._total_frame_count is not None
+            and self._current_frame_index >= self._total_frame_count
+        ):
+            return None
+        self._current_frame_index += 1
+
+        if (
+            not self._scene_has_been_mutated
+            and self._current_frame_index >= self._scene_mutation_frame_index
+        ):
+            self._mutate_scene_moving_a_pillow_to_the_floor()
+
+        pan_offset_x = self._current_pan_offset_x()
+        viewport = self._room_canvas[
+            0 : self._viewport_height_in_pixels,
+            pan_offset_x : pan_offset_x + self._viewport_width_in_pixels,
+        ].copy()
+        return viewport
+
+    def release(self) -> None:  # noqa: D401 - nothing to release for the simulation
+        return None
 
 
 class PanningCameraSceneSource:
