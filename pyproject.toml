@@ -31,7 +31,7 @@ visionary-evaluate = "visionary.evaluation.mot_metrics_evaluation:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-visionary = ["assets/*.jpeg"]
+visionary = ["assets/*.png", "assets/*.txt"]
 
 [tool.pytest.ini_options]
 # Lets the test suite import the package straight from ./src without an install.

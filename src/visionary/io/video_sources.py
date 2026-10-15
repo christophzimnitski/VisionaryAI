@@ -14,7 +14,60 @@ from typing import Iterator, Protocol
 import cv2
 import numpy as np
 
-_BUNDLED_ROCKET_SPRITE_RESOURCE = "assets/rocket_template.jpeg"
+# The Noto Emoji rocket (Apache-2.0, see assets/LICENSE-noto-emoji-*.txt).
+_BUNDLED_ROCKET_SPRITE_RESOURCE = "assets/rocket.png"
+
+# The synthetic scene's start positions, speeds and scripted head-on collision were
+# tuned around a sprite of roughly this size, so every sprite is scaled to it.
+# Swapping in a bigger or smaller image therefore keeps the same choreography.
+_ROCKET_SPRITE_LONGEST_SIDE_IN_PIXELS = 60
+
+# Transparent sprite pixels are composited onto white: the rocket then appears as a
+# bright patch on the near-black scene, which is what the motion detector expects.
+_ROCKET_SPRITE_BACKGROUND_BGR = (255, 255, 255)
+
+
+def normalize_rocket_sprite_image(sprite_image: np.ndarray | None) -> np.ndarray | None:
+    """Convert any loaded image into the sprite format the synthetic scene needs.
+
+    Returns an 8-bit, 3-channel BGR image whose longest side is
+    ``_ROCKET_SPRITE_LONGEST_SIDE_IN_PIXELS``, or ``None`` for an image that cannot
+    be used (missing, empty, or with an unsupported channel layout). Grayscale and
+    16-bit images are converted, and an alpha channel is composited onto white,
+    so the scene's recolouring and frame pasting never see an unexpected shape.
+    """
+    if sprite_image is None or sprite_image.size == 0:
+        return None
+
+    if sprite_image.dtype == np.uint16:
+        sprite_image = (sprite_image // 257).astype(np.uint8)
+    elif sprite_image.dtype != np.uint8:
+        sprite_image = np.clip(sprite_image, 0, 255).astype(np.uint8)
+
+    if sprite_image.ndim == 2:
+        sprite_image = cv2.cvtColor(sprite_image, cv2.COLOR_GRAY2BGR)
+    elif sprite_image.ndim == 3 and sprite_image.shape[2] == 1:
+        sprite_image = cv2.cvtColor(sprite_image, cv2.COLOR_GRAY2BGR)
+    elif sprite_image.ndim == 3 and sprite_image.shape[2] == 4:
+        color_channels = sprite_image[:, :, :3].astype(np.float32)
+        opacity = sprite_image[:, :, 3:4].astype(np.float32) / 255.0
+        background = np.array(_ROCKET_SPRITE_BACKGROUND_BGR, dtype=np.float32)
+        sprite_image = np.clip(
+            color_channels * opacity + background * (1.0 - opacity), 0, 255
+        ).astype(np.uint8)
+    elif not (sprite_image.ndim == 3 and sprite_image.shape[2] == 3):
+        return None
+
+    sprite_height, sprite_width = sprite_image.shape[:2]
+    scale_factor = _ROCKET_SPRITE_LONGEST_SIDE_IN_PIXELS / max(sprite_height, sprite_width)
+    if scale_factor != 1.0:
+        resized_width = max(1, round(sprite_width * scale_factor))
+        resized_height = max(1, round(sprite_height * scale_factor))
+        interpolation = cv2.INTER_AREA if scale_factor < 1.0 else cv2.INTER_LINEAR
+        sprite_image = cv2.resize(
+            sprite_image, (resized_width, resized_height), interpolation=interpolation
+        )
+    return np.ascontiguousarray(sprite_image)
 
 
 def load_bundled_rocket_sprite_image() -> np.ndarray | None:
@@ -22,16 +75,18 @@ def load_bundled_rocket_sprite_image() -> np.ndarray | None:
 
     Using ``importlib.resources`` means the image is found whether the package is
     run from source (``PYTHONPATH=src``) or installed as a wheel, regardless of the
-    current working directory.
+    current working directory. The image is read with its alpha channel intact and
+    then normalized, so its size and format do not matter.
     """
     try:
         rocket_sprite_resource = resources.files("visionary").joinpath(
             _BUNDLED_ROCKET_SPRITE_RESOURCE
         )
         with resources.as_file(rocket_sprite_resource) as rocket_sprite_path:
-            return cv2.imread(str(rocket_sprite_path), cv2.IMREAD_COLOR)
+            raw_sprite_image = cv2.imread(str(rocket_sprite_path), cv2.IMREAD_UNCHANGED)
     except (FileNotFoundError, ModuleNotFoundError):
         return None
+    return normalize_rocket_sprite_image(raw_sprite_image)
 
 
 class FrameSource(Protocol):
@@ -137,6 +192,9 @@ class SyntheticRocketSceneSource:
             # Prefer the real rocket image bundled with the package; only fall back
             # to a generated placeholder sprite if it cannot be loaded.
             rocket_sprite_image = load_bundled_rocket_sprite_image()
+        else:
+            # A caller-supplied sprite gets the same treatment as the bundled one.
+            rocket_sprite_image = normalize_rocket_sprite_image(rocket_sprite_image)
         if rocket_sprite_image is None:
             rocket_sprite_image = self._build_placeholder_rocket_sprite()
         self._rocket_sprite_image = rocket_sprite_image
