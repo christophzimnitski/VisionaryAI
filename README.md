@@ -1,4 +1,4 @@
-# Visionary
+# VisionaryAI
 
 A modular, tested multi-object tracking pipeline. It follows an arbitrary number
 of moving objects across video frames, assigns each a stable identity, survives
@@ -107,3 +107,12 @@ python -m visionary.evaluation.mot_metrics_evaluation            # MOTA / IDF1 (
   (YOLO / RT-DETR) and learned re-identification embeddings.
 - Multi-class support and a GPU detection backend.
 - Batch / offline processing mode and a small live dashboard.
+
+## License
+
+The code is released under the [MIT License](LICENSE).
+
+The synthetic demo's rocket sprite (`src/visionary/assets/rocket.png`) is the
+rocket emoji (U+1F680) from Google's [Noto Emoji](https://github.com/googlefonts/noto-emoji)
+project, copyright Google LLC, used under the Apache License 2.0. Its license
+texts ship next to it in `src/visionary/assets/`.
