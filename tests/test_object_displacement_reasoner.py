@@ -15,7 +15,9 @@ from visionary.features.object_feature_memory import ObservedObjectFeatures
 from visionary.tracking.object_displacement_reasoner import ObjectDisplacementReasoner
 
 
-def _signature(mean_color_bgr: list[float], normalized_size: float = 0.02) -> ObservedObjectFeatures:
+def _signature(
+    mean_color_bgr: list[float], normalized_size: float = 0.02
+) -> ObservedObjectFeatures:
     return ObservedObjectFeatures(
         mean_color_bgr=np.array(mean_color_bgr, dtype=np.float32),
         normalized_size=normalized_size,
@@ -69,8 +71,12 @@ def test_two_identical_pillows_are_matched_to_the_right_slots() -> None:
 
 def test_a_clearly_different_appearance_is_not_fused() -> None:
     reasoner = ObjectDisplacementReasoner(TrackerConfiguration())
-    reasoner.record_object_disappeared("white_pillow", _signature([235.0, 235.0, 235.0]), (150.0, 120.0), 10)
-    reasoner.record_object_appeared("orange_thing", _signature([20.0, 120.0, 235.0]), (520.0, 400.0), 40)
+    reasoner.record_object_disappeared(
+        "white_pillow", _signature([235.0, 235.0, 235.0]), (150.0, 120.0), 10
+    )
+    reasoner.record_object_appeared(
+        "orange_thing", _signature([20.0, 120.0, 235.0]), (520.0, 400.0), 40
+    )
 
     conclusions = reasoner.reconcile_into_displacement_conclusions(current_frame_index=41)
 
@@ -102,7 +108,9 @@ def test_stale_changes_are_forgotten() -> None:
     # long-forgotten disappearance.
     very_late_frame = 10 + configuration.displacement_reasoning_maximum_event_age_in_frames + 50
     reasoner.record_object_appeared("late_object", pillow, (520.0, 400.0), very_late_frame)
-    conclusions = reasoner.reconcile_into_displacement_conclusions(current_frame_index=very_late_frame)
+    conclusions = reasoner.reconcile_into_displacement_conclusions(
+        current_frame_index=very_late_frame
+    )
 
     assert conclusions == []
     assert reasoner.pending_disappearance_count == 0

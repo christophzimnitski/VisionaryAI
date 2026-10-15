@@ -115,7 +115,9 @@ def associate_detections_to_tracks(
     matched_track_detection_index_pairs: list[tuple[int, int]] = []
     matched_track_indices: set[int] = set()
     matched_detection_indices: set[int] = set()
-    for track_index, detection_index in zip(matched_track_rows, matched_detection_columns):
+    for track_index, detection_index in zip(
+        matched_track_rows, matched_detection_columns, strict=True
+    ):
         if pairwise_cost_matrix[track_index, detection_index] >= _FORBIDDEN_PAIR_COST:
             # The Hungarian solver had to pick a forbidden pair to complete the
             # assignment; treat it as no match.

@@ -238,7 +238,7 @@ class AnticipatoryFocusTracker:
         return float(np.hypot(first_center_x - second_center_x, first_center_y - second_center_y))
 
     def _protect_velocity_of_close_but_separate_placements(
-        self, accepted_placements: list["FocusPlacement"]
+        self, accepted_placements: list[FocusPlacement]
     ) -> None:
         """Flag still-separate tracks that pass close, to protect their velocity.
 

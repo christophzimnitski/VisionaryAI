@@ -67,7 +67,9 @@ class SalientRegionDetector:
         distinct_color_labels, label_pixel_counts = np.unique(
             quantized_color_label_image, return_counts=True
         )
-        for color_label, label_pixel_count in zip(distinct_color_labels, label_pixel_counts):
+        for color_label, label_pixel_count in zip(
+            distinct_color_labels, label_pixel_counts, strict=True
+        ):
             if color_label in background_color_labels:
                 continue
             if label_pixel_count < minimum_area:
@@ -138,7 +140,9 @@ class SalientRegionDetector:
         share_threshold = self._configuration.salient_region_background_color_share_threshold
         return {
             int(color_label)
-            for color_label, label_pixel_count in zip(distinct_color_labels, label_pixel_counts)
+            for color_label, label_pixel_count in zip(
+                distinct_color_labels, label_pixel_counts, strict=True
+            )
             if label_pixel_count / total_pixel_count >= share_threshold
         }
 

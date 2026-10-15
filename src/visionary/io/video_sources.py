@@ -8,8 +8,9 @@ identically regardless of the input.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from importlib import resources
-from typing import Iterator, Protocol
+from typing import Protocol
 
 import cv2
 import numpy as np

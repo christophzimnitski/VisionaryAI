@@ -145,7 +145,7 @@ class ObjectDisplacementReasoner:
         consumed_disappearance_indices: set[int] = set()
         consumed_appearance_indices: set[int] = set()
         for disappearance_index, appearance_index in zip(
-            matched_disappearance_rows, matched_appearance_columns
+            matched_disappearance_rows, matched_appearance_columns, strict=True
         ):
             if pairwise_cost_matrix[disappearance_index, appearance_index] >= _FORBIDDEN_PAIR_COST:
                 continue
@@ -154,12 +154,13 @@ class ObjectDisplacementReasoner:
             conclusion = DisplacementConclusion(
                 disappeared_object_identity=disappearance.object_identity,
                 appeared_object_identity=appearance.object_identity,
-                from_world_position=(disappearance.world_position_x, disappearance.world_position_y),
+                from_world_position=(
+                    disappearance.world_position_x,
+                    disappearance.world_position_y,
+                ),
                 to_world_position=(appearance.world_position_x, appearance.world_position_y),
                 feature_similarity=float(similarity_matrix[disappearance_index, appearance_index]),
-                frames_between_observations=abs(
-                    appearance.frame_index - disappearance.frame_index
-                ),
+                frames_between_observations=abs(appearance.frame_index - disappearance.frame_index),
                 concluded_at_frame_index=current_frame_index,
             )
             newly_concluded.append(conclusion)
@@ -224,7 +225,10 @@ class ObjectDisplacementReasoner:
         appearance: RememberedObjectChange,
         feature_similarity: float,
     ) -> bool:
-        if feature_similarity < self._configuration.displacement_reasoning_minimum_feature_similarity:
+        if (
+            feature_similarity
+            < self._configuration.displacement_reasoning_minimum_feature_similarity
+        ):
             return False
         world_distance = float(
             np.hypot(
@@ -232,7 +236,10 @@ class ObjectDisplacementReasoner:
                 appearance.world_position_y - disappearance.world_position_y,
             )
         )
-        if world_distance < self._configuration.displacement_reasoning_minimum_world_distance_in_pixels:
+        if (
+            world_distance
+            < self._configuration.displacement_reasoning_minimum_world_distance_in_pixels
+        ):
             # Too close to be a move: this is a re-acquisition in place, which the
             # tracker's own re-identification already handles -- not a displacement.
             return False

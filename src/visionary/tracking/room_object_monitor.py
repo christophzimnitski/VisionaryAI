@@ -240,7 +240,9 @@ class RoomObjectMonitor:
 
         matched_object_rows, matched_anchor_columns = linear_sum_assignment(cost_matrix)
         accepted: dict[int, int] = {}
-        for object_index, anchor_index in zip(matched_object_rows, matched_anchor_columns):
+        for object_index, anchor_index in zip(
+            matched_object_rows, matched_anchor_columns, strict=True
+        ):
             if cost_matrix[object_index, anchor_index] >= _FORBIDDEN_PAIR_COST:
                 continue
             accepted[int(object_index)] = int(anchor_index)
@@ -295,7 +297,9 @@ class RoomObjectMonitor:
         }
         missing_object_markers: list[MissingObjectMarker] = []
         for anchor in self._anchor_memory.anchors_expected_in_view(
-            world_offset, self._configuration.frame_width_in_pixels, self._configuration.frame_height_in_pixels
+            world_offset,
+            self._configuration.frame_width_in_pixels,
+            self._configuration.frame_height_in_pixels,
         ):
             if anchor.object_identity in confirmed_identities:
                 continue

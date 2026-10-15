@@ -70,7 +70,7 @@ class TemplateMatchingDetector:
 
         raw_candidate_boxes = [
             [top_left_x, top_left_y, self._template_width, self._template_height]
-            for top_left_x, top_left_y in zip(*matching_locations[::-1])
+            for top_left_x, top_left_y in zip(*matching_locations[::-1], strict=True)
         ]
         if not raw_candidate_boxes:
             return []

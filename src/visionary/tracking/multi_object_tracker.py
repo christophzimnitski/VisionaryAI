@@ -450,7 +450,7 @@ class MultiObjectTracker:
         self,
         tracks: list[TrackedObject],
         camera_motion_homography: np.ndarray | None,
-    ) -> "MultiObjectTracker._TrackPredictionBundle":
+    ) -> MultiObjectTracker._TrackPredictionBundle:
         prediction_bundle = self._TrackPredictionBundle()
         for track in tracks:
             if camera_motion_homography is not None:
@@ -498,7 +498,7 @@ class MultiObjectTracker:
         self,
         frame: np.ndarray,
         lost_tracks: list[TrackedObject],
-        lost_track_prediction: "MultiObjectTracker._TrackPredictionBundle",
+        lost_track_prediction: MultiObjectTracker._TrackPredictionBundle,
         detection_bounding_boxes: list[BoundingBox],
         detection_appearance_trait_vector_by_index: dict[int, np.ndarray],
         unclaimed_detection_indices: list[int],

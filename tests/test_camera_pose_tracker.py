@@ -47,7 +47,7 @@ def test_tracked_world_offset_follows_the_known_pan() -> None:
     assert tracked_offsets_x[-1] > 60.0
     assert all(
         later >= earlier - 2.0
-        for earlier, later in zip(tracked_offsets_x, tracked_offsets_x[1:])
+        for earlier, later in zip(tracked_offsets_x, tracked_offsets_x[1:], strict=False)
     )
 
     # And it should land near the ground-truth displacement from the first frame.

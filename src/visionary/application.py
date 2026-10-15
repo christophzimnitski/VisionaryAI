@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 import cv2
 
